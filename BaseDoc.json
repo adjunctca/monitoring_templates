@@ -1,5 +1,5 @@
 PromQL Reference — node_exporter + Grafana
-A reusable library of common queries for Linux host monitoring. Every query is written against the standard dashboard variable set so you can paste and go.
+A reusable library of common queries for Linux host monitoring.
 
 
 Conventions used here
@@ -14,57 +14,43 @@ A note on by vs without — most aggregations below use by (instance). If you wa
 Counters vs gauges — anything ending in _total is a counter and almost always needs rate()/increase() wrapped around it. Gauges (node_memory_*_bytes, node_load1, etc.) are read directly.
 
 
-CPU
-Overall CPU utilization % (per host) — the workhorse. Derived from idle time so it accounts for all non-idle modes:
-
+---CPU---
+-Overall CPU utilization % (per host) — the workhorse. Derived from idle time so it accounts for all non-idle modes:
 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100)
 
-CPU utilization broken down by mode — great for a stacked graph (user/system/iowait/softirq/steal/etc.):
-
+-CPU utilization broken down by mode — great for a stacked graph (user/system/iowait/softirq/steal/etc.):
 avg by (instance, mode) (rate(node_cpu_seconds_total{mode!="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100
 
-iowait specifically — a high, sustained value points at disk/storage bottlenecks, not CPU:
-
+-iowait specifically — a high, sustained value points at disk/storage bottlenecks, not CPU:
 avg by (instance) (rate(node_cpu_seconds_total{mode="iowait", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100
 
-steal time — relevant in your VMware estate; sustained steal means the hypervisor isn't giving the VM the CPU it's scheduled:
-
+-steal time — relevant in your VMware estate; sustained steal means the hypervisor isn't giving the VM the CPU it's scheduled:
 avg by (instance) (rate(node_cpu_seconds_total{mode="steal", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100
 
-Per-core utilization — keep the cpu label instead of averaging it away:
-
+-Per-core utilization — keep the cpu label instead of averaging it away:
 100 - (avg by (instance, cpu) (rate(node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100)
 
-CPU core count (per host) — one idle series exists per core, so counting them gives the core count. This is also the denominator you need for normalized load:
-
+-CPU core count (per host) — one idle series exists per core, so counting them gives the core count. This is also the denominator you need for normalized load:
 count by (instance) (node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
 
 
 ---Memory---
-Memory utilization % — the modern, correct way (uses MemAvailable, which the kernel computes accounting for reclaimable cache):
-
+-Memory utilization % — the modern, correct way (uses MemAvailable, which the kernel computes accounting for reclaimable cache):
 100 * (1 - (node_memory_MemAvailable_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} / node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}))
 
-Used memory (bytes):
-
+-Used memory (bytes):
 node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} - node_memory_MemAvailable_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
 
-Total / Available (bytes) — useful as single-stat panels:
-
+-Total / Available (bytes) — useful as single-stat panels:
 node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
-
 node_memory_MemAvailable_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
 
-Memory composition — for a stacked breakdown panel (free / buffers / cached / used):
-
+-Memory composition — for a stacked breakdown panel (free / buffers / cached / used):
 node_memory_MemFree_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
-
 node_memory_Buffers_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
-
 node_memory_Cached_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
 
-Committed memory ratio — how much the kernel has promised vs. physical RAM. Sustained > 1.0 is a flag for memory pressure / potential OOM territory:
-
+-Committed memory ratio — how much the kernel has promised vs. physical RAM. Sustained > 1.0 is a flag for memory pressure / potential OOM territory:
 node_memory_Committed_AS_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} / node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
 
 
