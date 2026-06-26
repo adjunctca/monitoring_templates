@@ -55,52 +55,43 @@ node_memory_Committed_AS_bytes{tenant=~"$tenant", site=~"$site", instance=~"$ins
 
 
 ---Swap---
-These are meant to form a picture of what is going on with swap — occupancy (how full swap is) and activity (whether the box is actively paging right now).
+These are meant to form a picture of what is going on with swap
+Occupancy - How full swap is
+and 
+Activity - whether the box is actively paging right now
 
-Swap used (bytes):
-
+-Swap used (bytes):
 node_memory_SwapTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} - node_memory_SwapFree_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
 
-Swap utilization % — the > 0 guard on SwapTotal keeps hosts with swap disabled from returning NaN:
-
+-Swap utilization % — the > 0 guard on SwapTotal keeps hosts with swap disabled from returning NaN:
 (node_memory_SwapTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} - node_memory_SwapFree_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}) / (node_memory_SwapTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} > 0) * 100
 
-Swap activity (pages/sec in & out) — this is the one that distinguishes a slow leak (occupancy creeps up, activity near zero) from real thrashing (sustained nonzero paging). pswpin = pages read back from swap, pswpout = pages written to swap:
-
+-Swap activity (pages/sec in & out) — this is the one that distinguishes a slow leak (occupancy creeps up, activity near zero) from real thrashing (sustained nonzero paging). pswpin = pages read back from swap, pswpout = pages written to swap:
 rate(node_vmstat_pswpin{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
-
 rate(node_vmstat_pswpout{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
 
-For the recurring "fills up every 10–15 days" pattern, swap occupancy trending steadily upward while paging activity stays near zero is the classic signature of a process that allocated and abandoned anonymous memory — the kernel parked cold pages in swap and never needed them back. predict_linear on the swap-used expression (see Alerting section) will give you a heads-up before the next manual drain is due.
 
 
 ---Load average---
-Load 1 / 5 / 15 — raw gauges:
-
+-Load 1 / 5 / 15 — raw gauges:
 node_load1{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
-
 node_load5{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
-
 node_load15{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
 
-Normalized load (load per core) — far more comparable across hosts with different core counts. A value of 1.0 means "fully saturated," regardless of whether it's a 2-core or 64-core box:
-
+-Normalized load (load per core) — far more comparable across hosts with different core counts. A value of 1.0 means "fully saturated," regardless of whether it's a 2-core or 64-core box:
 node_load1{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} / count by (instance) (node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
 
 
 ---Filesystem / disk space---
 The fstype and mountpoint filters strip out pseudo-filesystems (tmpfs, overlay, squashfs, etc.) so you only see real, mounted storage. Adjust the exclusion list to taste.
 
-Filesystem usage %:
-
+-Filesystem usage %:
 100 - (node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} * 100 / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
 
-Free space (bytes), per mountpoint:
-
+-Free space (bytes), per mountpoint:
 node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
 
-Inode usage % — the silent killer; a disk can be 40% full by bytes and still be at 100% inodes:
-
+-Inode usage % — the silent killer; a disk can be 40% full by bytes and still be at 100% inodes:
 100 - (node_filesystem_files_free{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} * 100 / node_filesystem_files{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
 
 
