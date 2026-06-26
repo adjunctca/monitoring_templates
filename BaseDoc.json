@@ -1,0 +1,309 @@
+PromQL Reference — node_exporter + Grafana
+A reusable library of common queries for Linux host monitoring. Every query is written against the standard dashboard variable set so you can paste and go.
+
+
+Conventions used here
+Standard label selector — baked into every query below:
+
+{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Rate windows — queries use $__rate_interval rather than a hardcoded [5m]. In Grafana this auto-resolves to max(4 × scrape_interval, $__interval), which is what keeps rate()/irate() from returning gaps or flatlines on your 60s scrape jobs. If you run any of these directly against Prometheus (not through Grafana), swap $__rate_interval for a concrete range like [5m].
+
+A note on by vs without — most aggregations below use by (instance). If you want to preserve extra labels (e.g. keep site or a friendly nodename), add them to the by (...) list. Anything not in by gets collapsed.
+
+Counters vs gauges — anything ending in _total is a counter and almost always needs rate()/increase() wrapped around it. Gauges (node_memory_*_bytes, node_load1, etc.) are read directly.
+
+
+CPU
+Overall CPU utilization % (per host) — the workhorse. Derived from idle time so it accounts for all non-idle modes:
+
+100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100)
+
+CPU utilization broken down by mode — great for a stacked graph (user/system/iowait/softirq/steal/etc.):
+
+avg by (instance, mode) (rate(node_cpu_seconds_total{mode!="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100
+
+iowait specifically — a high, sustained value points at disk/storage bottlenecks, not CPU:
+
+avg by (instance) (rate(node_cpu_seconds_total{mode="iowait", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100
+
+steal time — relevant in your VMware estate; sustained steal means the hypervisor isn't giving the VM the CPU it's scheduled:
+
+avg by (instance) (rate(node_cpu_seconds_total{mode="steal", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100
+
+Per-core utilization — keep the cpu label instead of averaging it away:
+
+100 - (avg by (instance, cpu) (rate(node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100)
+
+CPU core count (per host) — one idle series exists per core, so counting them gives the core count. This is also the denominator you need for normalized load:
+
+count by (instance) (node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
+
+
+---Memory---
+Memory utilization % — the modern, correct way (uses MemAvailable, which the kernel computes accounting for reclaimable cache):
+
+100 * (1 - (node_memory_MemAvailable_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} / node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}))
+
+Used memory (bytes):
+
+node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} - node_memory_MemAvailable_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Total / Available (bytes) — useful as single-stat panels:
+
+node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+node_memory_MemAvailable_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Memory composition — for a stacked breakdown panel (free / buffers / cached / used):
+
+node_memory_MemFree_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+node_memory_Buffers_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+node_memory_Cached_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Committed memory ratio — how much the kernel has promised vs. physical RAM. Sustained > 1.0 is a flag for memory pressure / potential OOM territory:
+
+node_memory_Committed_AS_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} / node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+
+---Swap---
+These are meant to form a picture of what is going on with swap — occupancy (how full swap is) and activity (whether the box is actively paging right now).
+
+Swap used (bytes):
+
+node_memory_SwapTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} - node_memory_SwapFree_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Swap utilization % — the > 0 guard on SwapTotal keeps hosts with swap disabled from returning NaN:
+
+(node_memory_SwapTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} - node_memory_SwapFree_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}) / (node_memory_SwapTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} > 0) * 100
+
+Swap activity (pages/sec in & out) — this is the one that distinguishes a slow leak (occupancy creeps up, activity near zero) from real thrashing (sustained nonzero paging). pswpin = pages read back from swap, pswpout = pages written to swap:
+
+rate(node_vmstat_pswpin{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+rate(node_vmstat_pswpout{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+For the recurring "fills up every 10–15 days" pattern, swap occupancy trending steadily upward while paging activity stays near zero is the classic signature of a process that allocated and abandoned anonymous memory — the kernel parked cold pages in swap and never needed them back. predict_linear on the swap-used expression (see Alerting section) will give you a heads-up before the next manual drain is due.
+
+
+---Load average---
+Load 1 / 5 / 15 — raw gauges:
+
+node_load1{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+node_load5{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+node_load15{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Normalized load (load per core) — far more comparable across hosts with different core counts. A value of 1.0 means "fully saturated," regardless of whether it's a 2-core or 64-core box:
+
+node_load1{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} / count by (instance) (node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
+
+
+---Filesystem / disk space---
+The fstype and mountpoint filters strip out pseudo-filesystems (tmpfs, overlay, squashfs, etc.) so you only see real, mounted storage. Adjust the exclusion list to taste.
+
+Filesystem usage %:
+
+100 - (node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} * 100 / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
+
+Free space (bytes), per mountpoint:
+
+node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Inode usage % — the silent killer; a disk can be 40% full by bytes and still be at 100% inodes:
+
+100 - (node_filesystem_files_free{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} * 100 / node_filesystem_files{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
+
+
+---Disk I/O---
+Read / write throughput (bytes/sec):
+
+rate(node_disk_read_bytes_total{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+rate(node_disk_written_bytes_total{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+IOPS (read / write operations per sec):
+
+rate(node_disk_reads_completed_total{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+rate(node_disk_writes_completed_total{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+Disk busy / utilization % — io_time_seconds_total is time-the-device-was-busy; rate of it × 100 gives an effective % utilization. Sustained near 100% means the disk is the bottleneck:
+
+rate(node_disk_io_time_seconds_total{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval]) * 100
+
+Average I/O latency (seconds per op) — read latency shown; the > 0 guards against divide-by-zero on idle disks:
+
+rate(node_disk_read_time_seconds_total{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval]) / (rate(node_disk_reads_completed_total{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval]) > 0)
+
+
+---Network---
+node_exporter counts in bytes; multiply by 8 if your panel is in bits/sec. The device!="lo" filter drops loopback. You'll often also want device!~"veth.*|docker.*|cali.*|lxc.*" to drop container/virtual interfaces.
+
+Receive / transmit throughput (bytes/sec):
+
+rate(node_network_receive_bytes_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+rate(node_network_transmit_bytes_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+Throughput in bits/sec — same thing, ×8:
+
+rate(node_network_receive_bytes_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval]) * 8
+
+Packets/sec (rx / tx):
+
+rate(node_network_receive_packets_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+rate(node_network_transmit_packets_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+Errors & drops (rx + tx combined per interface) — anything sustained above zero is worth chasing:
+
+rate(node_network_receive_errs_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval]) + rate(node_network_transmit_errs_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+rate(node_network_receive_drop_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval]) + rate(node_network_transmit_drop_total{device!="lo", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+
+System / process / misc
+Uptime — time() is "now" on the Prometheus server, so this works regardless of clock skew on the target:
+
+time() - node_boot_time_seconds{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Context switches / sec — a useful "is this box thrashing" signal:
+
+rate(node_context_switches_total{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])
+
+Processes — running vs blocked:
+
+node_procs_running{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+node_procs_blocked{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+File descriptor usage % — catches leaking services before they hit the limit:
+
+node_filefd_allocated{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} * 100 / node_filefd_maximum{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+
+---Availability / inventory---
+Target up/down — 1 = scrape succeeding, 0 = target down:
+
+up{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Count of hosts currently up:
+
+count(up{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} == 1)
+
+Count of hosts currently down — handy single-stat with a red threshold:
+
+count(up{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} == 0) or vector(0)
+
+The or vector(0) makes the panel show 0 instead of "No data" when nothing is down — much nicer on a status board.
+
+Total CPU cores across the selected fleet:
+
+count(node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
+
+Total RAM across the selected fleet (bytes):
+
+sum(node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})
+
+
+---Top-K patterns---
+Drop these into a table panel for an instant "who's hot right now" view.
+
+Top 5 hosts by CPU:
+
+topk(5, 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100))
+
+Top 5 hosts by memory utilization %:
+
+topk(5, 100 * (1 - (node_memory_MemAvailable_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} / node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})))
+
+Top 5 fullest filesystems %:
+
+topk(5, 100 - (node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} * 100 / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}))
+
+
+Alerting expressions (Alertmanager)
+These are written as bare conditions — wrap them in your alert rule's expr and tune the thresholds + for: durations to your environment.
+
+Host down (5m):
+
+up{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} == 0
+
+High CPU (> 90% for 10m):
+
+100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[$__rate_interval])) * 100) > 90
+
+High memory (> 90%):
+
+100 * (1 - (node_memory_MemAvailable_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} / node_memory_MemTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})) > 90
+
+Low disk space (< 10% free):
+
+node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} * 100 / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} < 10
+
+Disk predicted to fill within 24h — predict_linear extrapolates the trend; alerting on the forecast buys you lead time instead of paging at 2am when it's already full:
+
+predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay|iso9660|ramfs|devtmpfs", tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}[6h], 24 * 3600) < 0
+
+Swap predicted to fill within 3 days — tailored to your 10–15 day creep; fires while there's still plenty of runway to investigate (or schedule the drain) instead of reacting:
+
+predict_linear((node_memory_SwapTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"} - node_memory_SwapFree_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"})[6h:], 3 * 24 * 3600) >= node_memory_SwapTotal_bytes{tenant=~"$tenant", site=~"$site", instance=~"$instance", job=~"$job"}
+
+Note the [6h:] subquery syntax on that last one — predict_linear needs a range vector, and since the swap-used expression is itself computed (not a raw metric), you feed it through a subquery to produce the range.
+
+
+Quick metric cheat-sheet
+Need
+Metric(s)
+Counter?
+CPU time by mode
+node_cpu_seconds_total
+yes
+Total / available RAM
+node_memory_MemTotal_bytes, node_memory_MemAvailable_bytes
+no
+Swap
+node_memory_SwapTotal_bytes, node_memory_SwapFree_bytes
+no
+Swap paging activity
+node_vmstat_pswpin, node_vmstat_pswpout
+yes
+Load avg
+node_load1, node_load5, node_load15
+no
+Filesystem space
+node_filesystem_avail_bytes, node_filesystem_size_bytes
+no
+Inodes
+node_filesystem_files_free, node_filesystem_files
+no
+Disk throughput
+node_disk_read_bytes_total, node_disk_written_bytes_total
+yes
+Disk IOPS
+node_disk_reads_completed_total, node_disk_writes_completed_total
+yes
+Disk busy time
+node_disk_io_time_seconds_total
+yes
+Network bytes
+node_network_receive_bytes_total, node_network_transmit_bytes_total
+yes
+Network errors/drops
+node_network_*_errs_total, node_network_*_drop_total
+yes
+Uptime
+node_boot_time_seconds
+no
+File descriptors
+node_filefd_allocated, node_filefd_maximum
+no
+Target health
+up
+no
+
+
