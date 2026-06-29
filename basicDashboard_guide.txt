@@ -1,32 +1,32 @@
-QUERIES MARKED WITH ###
+QUERIES MARKED WITH ### 
 
 ---UPTIME---
 Panel title Uptime
-###time() - node_boot_time_seconds{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}
+### time() - node_boot_time_seconds{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}
 Set Legend to Custom > {{instance}}.
 Right pane > Standard options >> Unit >> search "seconds" >> pick seconds (s).
 
 
 ---STATS AND GUGAGES---
 -CPU Cores (STAT), unit short:
-###count by (instance) (count by (instance, cpu) (node_cpu_seconds_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",mode="idle"}))
+### count by (instance) (count by (instance, cpu) (node_cpu_seconds_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",mode="idle"}))
 
 -Total RAM (STAT), unit bytes (IEC):
-###node_memory_MemTotal_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}
+### node_memory_MemTotal_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}
 
 -CPU Busy (GAUGE): this one introduces the GAUGE type. Pick GAUGE, paste the query, then in the right pane set Standard options >> Min = 0, Max = 100, Unit = percent (0-100). Then open the Thresholds section, switch to Absolute, and add steps: green at base, yellow at 70, red at 90. Those thresholds are what color the arc.
-###100 - (avg by (instance) (rate(node_cpu_seconds_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",mode="idle"}[$__rate_interval])) * 100)
+### 100 - (avg by (instance) (rate(node_cpu_seconds_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",mode="idle"}[$__rate_interval])) * 100)
 
 Memory Used (GAUGE): duplicate the CPU Busy panel (panel menu >> More >> Duplicate) so you inherit the thresholds and min/max, then just swap the query:
-###100 * (1 - (node_memory_MemAvailable_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"} / ###node_memory_MemTotal_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}))
+### 100 * (1 - (node_memory_MemAvailable_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"} / ### node_memory_MemTotal_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}))
 
 Now drag the five panels into a row and resize: the three STATs narrow on the left, the two GAUGEs wider on the right. To label the band, click Add >> Row, name it Overview, and drag it above these panels.
 
-# ---TIME SERIES---
+---TIME SERIES---
 --CPU PANELS--
 These are your first timeseries panels, and they have a couple of options the STATs don't.
 -CPU Usage by Mode: Add >> Visualization >> Time series. Query:
-###avg by (instance, mode) (rate(node_cpu_seconds_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",mode!="idle"}[$__rate_interval])) * 100
+### avg by (instance, mode) (rate(node_cpu_seconds_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",mode!="idle"}[$__rate_interval])) * 100
 
 Legend >> Custom >> {{instance}} - {{mode}}. Unit = percent (0-100), Min = 0. 
 In the right pane: under Graph styles set Fill opacity to ~20 and, 
@@ -46,17 +46,20 @@ Same timeseries mechanics; here's purely what differs per panel.
 ### 100 * (1 - (node_memory_MemAvailable_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"} / node_memory_MemTotal_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}))
 
 -Swap Used — unit bytes (IEC), Min 0:
-node_memory_SwapTotal_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"} - node_memory_SwapFree_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}
-Filesystem Used % — unit percent (0-100), fill 0, legend {{instance}}:{{mountpoint}}. Note the filter moves inside both metric selectors:
-100 - (node_filesystem_avail_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",fstype!~"tmpfs|squashfs|overlay|ramfs|devtmpfs|fuse.*|iso9660"} * 100 / node_filesystem_size_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",fstype!~"tmpfs|squashfs|overlay|ramfs|devtmpfs|fuse.*|iso9660"})
-Disk I/O — unit bytes/sec (IEC) (Bps), two queries:
-rate(node_disk_read_bytes_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",device!~"dm-.*|loop.*|sr.*|ram.*"}[$__rate_interval])
-rate(node_disk_written_bytes_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",device!~"dm-.*|loop.*|sr.*|ram.*"}[$__rate_interval])
-Legends {{instance}}:{{device}} read / write.
-Network Traffic — unit bits/sec (SI) (bps), full-width, two queries:
-rate(node_network_receive_bytes_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",device!~"lo|veth.*|docker.*|br-.*|cni.*|flannel.*|virbr.*"}[$__rate_interval]) * 8
-rate(node_network_transmit_bytes_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",device!~"lo|veth.*|docker.*|br-.*|cni.*|flannel.*|virbr.*"}[$__rate_interval]) * 8
-Legends {{instance}}:{{device}} rx / tx.
-6. Finish
-Set the dashboard time range to now-1h, auto-refresh to 30s (top-right controls), then Save. Pick a tenant in the dropdown and confirm the site/job/instance lists narrow accordingly — that's the cascade proving itself.
-A couple of habits that'll save you grief as you go: build one panel of each type carefully (one STAT, one GAUGE, one timeseries) and then Duplicate rather than rebuild — you inherit units, thresholds, and legend settings and only swap the query, which is faster and keeps styling consistent. And whenever a rate panel looks flat or empty, your first suspect is the same $__rate_interval/scrape-interval relationship from the SNMP work, not the query itself.
+### node_memory_SwapTotal_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"} - node_memory_SwapFree_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}
+
+-Filesystem Used % — unit percent (0-100), fill 0, legend {{instance}}:{{mountpoint}}. NOTE the filter moves inside both metric selectors:
+###100 - (node_filesystem_avail_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",fstype!~"tmpfs|squashfs|overlay|ramfs|devtmpfs|fuse.*|iso9660"} * 100 / node_filesystem_size_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",fstype!~"tmpfs|squashfs|overlay|ramfs|devtmpfs|fuse.*|iso9660"})
+
+-Disk I/O — unit bytes/sec (IEC) (Bps), two queries:
+### rate(node_disk_read_bytes_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",device!~"dm-.*|loop.*|sr.*|ram.*"}[$__rate_interval])
+### rate(node_disk_written_bytes_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",device!~"dm-.*|loop.*|sr.*|ram.*"}[$__rate_interval])
+LEGENDS {{instance}}:{{device}} read / write.
+
+-Network Traffic — unit bits/sec (SI) (bps), full-width, two queries:
+### rate(node_network_receive_bytes_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",device!~"lo|veth.*|docker.*|br-.*|cni.*|flannel.*|virbr.*"}[$__rate_interval]) * 8
+### rate(node_network_transmit_bytes_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",device!~"lo|veth.*|docker.*|br-.*|cni.*|flannel.*|virbr.*"}[$__rate_interval]) * 8
+LEGENDS {{instance}}:{{device}} rx / tx.
+
+---FINISHING---
+Set dashboard time range to now-1h, auto-refresh to 30s (top-right controls)
