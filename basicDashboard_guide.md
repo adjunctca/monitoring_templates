@@ -1,9 +1,9 @@
-The Overview row
+#The Overview row
 Now the panels. I'll do the first stat and the first gauge in full clicks, then the repeats just call out what changes, since the mechanics are identical.
 Click Add → Visualization. You're in the panel editor: query editor at the bottom, visualization picker and options on the right.
 Uptime (stat):
 
-Top-right visualization dropdown → Stat.
+##Top-right visualization dropdown → Stat.
 In the query editor, confirm the datasource is ${datasource}, make sure you're on the Code tab (not Builder), and paste:
 
    time() - node_boot_time_seconds{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}
@@ -22,7 +22,7 @@ CPU Busy (gauge): this one introduces the gauge type. Pick Gauge, paste the quer
 Memory Used (gauge): duplicate the CPU Busy panel (panel menu → More → Duplicate) so you inherit the thresholds and min/max, then just swap the query:
 100 * (1 - (node_memory_MemAvailable_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"} / node_memory_MemTotal_bytes{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job"}))
 Now drag the five panels into a row and resize: the three stats narrow on the left, the two gauges wider on the right. To label the band, click Add → Row, name it Overview, and drag it above these panels.
-4. The CPU row
+###4. The CPU row
 These are your first timeseries panels, and they have a couple of options the stats don't.
 CPU Usage by Mode: Add → Visualization → Time series. Query:
 avg by (instance, mode) (rate(node_cpu_seconds_total{tenant=~"$tenant",site=~"$site",instance=~"$instance",job=~"$job",mode!="idle"}[$__rate_interval])) * 100
