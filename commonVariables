@@ -1,0 +1,23 @@
+---TENANT---
+Type: Query
+Name: tenant
+Label: Tenant
+Classic Query: label_values(node_uname_info, tenant)
+
+---SITE---
+Type: Query
+Name: site
+Label: Site
+Classic Query: label_values(node_uname_info{tenant=~"$tenant"}, site)
+
+---JOB---
+Type: Query
+Name: job
+Label: Job
+Classic Query: label_values(node_uname_info{tenant=~"$tenant",site=~"$site"}, job)
+
+---Instance---
+Type: Query
+Name: instance
+Label: Instance
+Classic Query: label_values(node_uname_info{tenant=~"$tenant",site=~"$site",job=~"$job"}, instance)
